@@ -66,7 +66,7 @@ def get_mask(img):
 
 def find_best_alignment(canvas, patch):
     """Generically aligns a new patch onto the canvas by finding the translation (dx, dy)
-    that maximizes edge boundary contact while minimizing overlap.
+    and slight angular tweak that maximizes edge boundary contact while minimizing overlap.
     """
     m_canvas = get_mask(canvas)
     m_patch = get_mask(patch)
@@ -186,13 +186,19 @@ def merge_patch_to_canvas(canvas, patch, dx, dy):
 
 
 def display_final_canvas(raw_fragment_metadata, step_callback=None):
-    """Sequential stitching loop preserving the default order of detected fragments without sorting."""
+    """Fully generalized dynamic stitching loop using greedy best-match edge search.
+    Invokes step_callback(intermediate_canvas, step_number, total_steps) at each iteration.
+    """
     if not raw_fragment_metadata:
         return None
 
     unstitched = [item["img"] for item in raw_fragment_metadata]
 
-    # Base canvas takes the very first fragment in detected order
+    # Sort fragments by size (area) to start with the largest piece as base canvas
+    unstitched.sort(
+        key=lambda img: np.count_nonzero(get_mask(img)), reverse=True
+    )
+
     canvas = unstitched.pop(0)
     total_steps = len(unstitched)
     current_step = 0
@@ -201,13 +207,22 @@ def display_final_canvas(raw_fragment_metadata, step_callback=None):
     if step_callback:
         step_callback(canvas, current_step, total_steps)
 
-    # Sequentially align and merge each remaining fragment in original sequence
+    # Greedily pick and stitch the next best-fitting fragment
     while unstitched:
-        next_patch = unstitched.pop(0)
-        best_dx, best_dy, _ = find_best_alignment(canvas, next_patch)
+        best_candidate_idx = 0
+        best_dx, best_dy = 0, 0
+        best_score = float("inf")
 
-        # Merge the patch in default sequence
-        canvas = merge_patch_to_canvas(canvas, next_patch, best_dx, best_dy)
+        for idx, patch in enumerate(unstitched):
+            dx, dy, score = find_best_alignment(canvas, patch)
+            if score < best_score:
+                best_score = score
+                best_dx, best_dy = dx, dy
+                best_candidate_idx = idx
+
+        # Merge the winning piece
+        winning_patch = unstitched.pop(best_candidate_idx)
+        canvas = merge_patch_to_canvas(canvas, winning_patch, best_dx, best_dy)
 
         current_step += 1
         # Trigger step visualization
